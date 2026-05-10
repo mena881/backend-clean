@@ -1,0 +1,18 @@
+{
+    "sourceFile": "server.js",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1778443465037,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1778443465037,
+            "name": "Commit-0",
+            "content": "const express = require('express');\r\nconst admin = require('firebase-admin');\r\nconst cors = require('cors');\r\n\r\nconst app = express();\r\n\r\n\r\n// ==========================\r\n// MIDDLEWARE\r\n// ==========================\r\n\r\napp.use(cors());\r\n\r\napp.use(express.json());\r\n\r\n\r\n// ==========================\r\n// FIREBASE\r\n// ==========================\r\n\r\nconst serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);\r\n\r\nadmin.initializeApp({\r\n    credential: admin.credential.cert(serviceAccount),\r\n    databaseURL: 'https://test-3b890-default-rtdb.firebaseio.com/'\r\n});\r\n\r\nconst db = admin.database();\r\n\r\n\r\n// ==========================\r\n// HOME\r\n// ==========================\r\n\r\napp.get('/', (req, res) => {\r\n\r\n    res.send('Backend Connected To Firebase');\r\n\r\n});\r\n\r\n\r\n// ==========================\r\n// GET ANY TABLE\r\n// Example:\r\n// /db/employees\r\n// /db/invoices\r\n// /db/products\r\n// ==========================\r\n\r\napp.get('/db/:path', async (req, res) => {\r\n\r\n    try {\r\n\r\n        const dbPath = req.params.path;\r\n\r\n        const snapshot = await db.ref(dbPath).once('value');\r\n\r\n        res.json(snapshot.val());\r\n\r\n    } catch (error) {\r\n\r\n        res.status(500).json({\r\n            error: error.message\r\n        });\r\n\r\n    }\r\n\r\n});\r\n\r\n\r\n// ==========================\r\n// ADD DATA\r\n// ==========================\r\n\r\napp.post('/db/:path', async (req, res) => {\r\n\r\n    try {\r\n\r\n        const dbPath = req.params.path;\r\n\r\n        const data = req.body;\r\n\r\n        const ref = await db.ref(dbPath).push(data);\r\n\r\n        res.json({\r\n            success: true,\r\n            id: ref.key\r\n        });\r\n\r\n    } catch (error) {\r\n\r\n        res.status(500).json({\r\n            error: error.message\r\n        });\r\n\r\n    }\r\n\r\n});\r\n\r\n\r\n// ==========================\r\n// UPDATE DATA\r\n// ==========================\r\n\r\napp.put('/db/:path/:id', async (req, res) => {\r\n\r\n    try {\r\n\r\n        const dbPath = req.params.path;\r\n\r\n        const id = req.params.id;\r\n\r\n        const data = req.body;\r\n\r\n        await db.ref(`${dbPath}/${id}`).update(data);\r\n\r\n        res.json({\r\n            success: true\r\n        });\r\n\r\n    } catch (error) {\r\n\r\n        res.status(500).json({\r\n            error: error.message\r\n        });\r\n\r\n    }\r\n\r\n});\r\n\r\n\r\n// ==========================\r\n// DELETE DATA\r\n// ==========================\r\n\r\napp.delete('/db/:path/:id', async (req, res) => {\r\n\r\n    try {\r\n\r\n        const dbPath = req.params.path;\r\n\r\n        const id = req.params.id;\r\n\r\n        await db.ref(`${dbPath}/${id}`).remove();\r\n\r\n        res.json({\r\n            success: true\r\n        });\r\n\r\n    } catch (error) {\r\n\r\n        res.status(500).json({\r\n            error: error.message\r\n        });\r\n\r\n    }\r\n\r\n});\r\n\r\n\r\n// ==========================\r\n// SERVER\r\n// ==========================\r\n\r\nconst PORT = process.env.PORT || 3000;\r\n\r\napp.listen(PORT, () => {\r\n\r\n    console.log(`Server Running On Port ${PORT}`);\r\n\r\n});"
+        }
+    ]
+}
