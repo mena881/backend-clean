@@ -29,6 +29,111 @@ const db = admin.database();
 
 
 // ==========================
+// ROUTE PERMISSIONS
+// ==========================
+
+const ROUTE_PERMISSIONS = {
+
+    employees: "view_employees",
+    invoices: "view_invoice_done",
+    products: "view_products",
+    users: "view_users",
+    orders: "view_orders",
+    suppliers: "view_suppliers",
+    stock: "view_stock",
+    tasks: "view_tasks",
+    shipping: "view_shipping"
+
+};
+
+
+// ==========================
+// AUTH MIDDLEWARE
+// ==========================
+
+async function authMiddleware(req, res, next) {
+
+    try {
+
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader) {
+
+            return res.status(401).json({
+                error: "No token provided"
+            });
+
+        }
+
+        const token = authHeader.split("Bearer ")[1];
+
+        if (!token) {
+
+            return res.status(401).json({
+                error: "Invalid token"
+            });
+
+        }
+
+        const decodedToken = await admin.auth().verifyIdToken(token);
+
+        req.user = decodedToken;
+
+        next();
+
+    } catch (error) {
+
+        res.status(401).json({
+            error: "Unauthorized"
+        });
+
+    }
+
+}
+
+
+// ==========================
+// CHECK PERMISSION
+// ==========================
+
+async function hasPermission(user, permission) {
+
+    try {
+
+        const uid = user.uid;
+
+        const snapshot = await db
+            .ref(`users/${uid}`)
+            .once('value');
+
+        const userData = snapshot.val();
+
+        if (!userData) {
+            return false;
+        }
+
+        // OWNER
+        if (
+            userData.role === "owner" ||
+            userData.roleName === "owner"
+        ) {
+            return true;
+        }
+
+        const permissions = userData.permissions || {};
+
+        return !!permissions[permission];
+
+    } catch (error) {
+
+        return false;
+
+    }
+
+}
+
+
+// ==========================
 // HOME
 // ==========================
 
@@ -41,17 +146,30 @@ app.get('/', (req, res) => {
 
 // ==========================
 // GET ANY TABLE
-// Example:
-// /db/employees
-// /db/invoices
-// /db/products
 // ==========================
 
-app.get('/db/:path', async (req, res) => {
+app.get('/db/:path', authMiddleware, async (req, res) => {
 
     try {
 
         const dbPath = req.params.path;
+
+        const permission = ROUTE_PERMISSIONS[dbPath];
+
+        // CHECK PERMISSION
+        if (permission) {
+
+            const allowed = await hasPermission(req.user, permission);
+
+            if (!allowed) {
+
+                return res.status(403).json({
+                    error: "No permission"
+                });
+
+            }
+
+        }
 
         const snapshot = await db.ref(dbPath).once('value');
 
@@ -72,11 +190,28 @@ app.get('/db/:path', async (req, res) => {
 // ADD DATA
 // ==========================
 
-app.post('/db/:path', async (req, res) => {
+app.post('/db/:path', authMiddleware, async (req, res) => {
 
     try {
 
         const dbPath = req.params.path;
+
+        const permission = ROUTE_PERMISSIONS[dbPath];
+
+        // CREATE PERMISSION
+        if (permission) {
+
+            const allowed = await hasPermission(req.user, permission);
+
+            if (!allowed) {
+
+                return res.status(403).json({
+                    error: "No permission"
+                });
+
+            }
+
+        }
 
         const data = req.body;
 
@@ -102,13 +237,30 @@ app.post('/db/:path', async (req, res) => {
 // UPDATE DATA
 // ==========================
 
-app.put('/db/:path/:id', async (req, res) => {
+app.put('/db/:path/:id', authMiddleware, async (req, res) => {
 
     try {
 
         const dbPath = req.params.path;
 
         const id = req.params.id;
+
+        const permission = ROUTE_PERMISSIONS[dbPath];
+
+        // UPDATE PERMISSION
+        if (permission) {
+
+            const allowed = await hasPermission(req.user, permission);
+
+            if (!allowed) {
+
+                return res.status(403).json({
+                    error: "No permission"
+                });
+
+            }
+
+        }
 
         const data = req.body;
 
@@ -133,13 +285,30 @@ app.put('/db/:path/:id', async (req, res) => {
 // DELETE DATA
 // ==========================
 
-app.delete('/db/:path/:id', async (req, res) => {
+app.delete('/db/:path/:id', authMiddleware, async (req, res) => {
 
     try {
 
         const dbPath = req.params.path;
 
         const id = req.params.id;
+
+        const permission = ROUTE_PERMISSIONS[dbPath];
+
+        // DELETE PERMISSION
+        if (permission) {
+
+            const allowed = await hasPermission(req.user, permission);
+
+            if (!allowed) {
+
+                return res.status(403).json({
+                    error: "No permission"
+                });
+
+            }
+
+        }
 
         await db.ref(`${dbPath}/${id}`).remove();
 
