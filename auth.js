@@ -1,7 +1,7 @@
 // api/auth.js - Vercel Serverless Function
 // نظام المصادقة وإدارة التراخيص - النسخة الخلفية
-// الإصدار: 3.1
-// آخر تحديث: 2026-03-10
+// الإصدار: 3.2
+// آخر تحديث: 2026-05-12
 
 const fetch = require('node-fetch');
 
@@ -616,14 +616,14 @@ module.exports = async (req, res) => {
     
     try {
         // مسار تسجيل الدخول
-        if (path === '/api/auth/signin' && method === 'POST') {
+        if (path === '/signin' && method === 'POST') {
             const body = req.body || (typeof req.body === 'string' ? JSON.parse(req.body) : {});
             const result = await signIn(body);
             return res.status(200).json(result);
         }
         
         // مسار التحقق من الترخيص
-        if (path === '/api/auth/verify-license' && (method === 'POST' || method === 'GET')) {
+        if (path === '/verify-license' && (method === 'POST' || method === 'GET')) {
             let params = {};
             if (method === 'POST') {
                 params = req.body || {};
@@ -635,28 +635,28 @@ module.exports = async (req, res) => {
         }
         
         // مسار استعادة بيانات المستخدم مع الدور
-        if (path === '/api/auth/get-user-role' && method === 'POST') {
+        if (path === '/get-user-role' && method === 'POST') {
             const body = req.body || {};
             const result = await getUserWithRole(body);
             return res.status(200).json(result);
         }
         
         // مسار التحقق من الصلاحية
-        if (path === '/api/auth/has-permission' && method === 'POST') {
+        if (path === '/has-permission' && method === 'POST') {
             const body = req.body || {};
             const result = hasPermission(body);
             return res.status(200).json(result);
         }
         
         // مسار الحصول على اسم الدور
-        if (path === '/api/auth/get-role-name' && method === 'POST') {
+        if (path === '/get-role-name' && method === 'POST') {
             const body = req.body || {};
             const result = getCurrentRoleName(body);
             return res.status(200).json(result);
         }
         
         // مسار تسجيل الخروج (خدمة جانبية)
-        if (path === '/api/auth/signout' && method === 'POST') {
+        if (path === '/signout' && method === 'POST') {
             return res.status(200).json({
                 success: true,
                 message: 'تم تسجيل الخروج بنجاح'
@@ -664,10 +664,10 @@ module.exports = async (req, res) => {
         }
         
         // مسار اختبار الصحة
-        if (path === '/api/auth/health' && method === 'GET') {
+        if (path === '/health' && method === 'GET') {
             return res.status(200).json({
                 status: 'ok',
-                version: '3.1',
+                version: '3.2',
                 timestamp: new Date().toISOString()
             });
         }
