@@ -1,7 +1,8 @@
 // api/auth.js - Vercel Serverless Function
 // نظام المصادقة وإدارة التراخيص - النسخة الخلفية
-// الإصدار: 3.1
+// الإصدار: 3.2
 // آخر تحديث: 2026-03-10
+// التعديل: دعم هيكل البيانات الجديد من Google Sheet (limits, pages)
 
 const fetch = require('node-fetch');
 
@@ -53,17 +54,11 @@ let database = null;
 
 /**
  * تهيئة Firebase Admin SDK
- * requires environment variables:
- * - FIREBASE_PROJECT_ID
- * - FIREBASE_PRIVATE_KEY
- * - FIREBASE_CLIENT_EMAIL
- * - FIREBASE_DATABASE_URL
  */
 async function initFirebaseAdmin() {
     if (admin && database) return { admin, database };
     
     try {
-        // محاولة استخدام Firebase Admin SDK إذا كانت المتغيرات البيئية موجودة
         if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
             admin = require('firebase-admin');
             
@@ -83,7 +78,6 @@ async function initFirebaseAdmin() {
             return { admin, database };
         }
         
-        // إذا لم تكن المتغيرات البيئية متوفرة، نستخدم REST API
         console.log('⚠️ Using Firebase REST API (no admin credentials)');
         return { admin: null, database: null };
         
@@ -157,15 +151,12 @@ async function getRoleName(roleId) {
     if (!roleId) return 'موظف';
     
     try {
-        // البحث في جدول roles
         const roles = await fetchFromFirebase('roles');
         
         if (roles && roles[roleId]) {
-            // إذا وجدنا الدور، نعيد اسمه
             return roles[roleId].name || roles[roleId].title || 'موظف';
         }
         
-        // إذا كان roleId هو owner أو كلمة محددة
         if (roleId === 'owner' || roleId === 'OWNER') {
             return 'Owner';
         }
@@ -191,14 +182,11 @@ async function findOwner(username, password) {
         
         if (!owners) return null;
         
-        // البحث في كل مالك
         for (const [ownerId, ownerData] of Object.entries(owners)) {
             const profile = ownerData.profile;
             if (!profile) continue;
             
-            // التحقق من اسم المستخدم (يمكن أن يكون الإيميل أو أي حقل آخر)
             if (profile.email === username) {
-                // تشفير كلمة المرور المدخلة ومقارنتها مع المشفرة المخزنة
                 const hashedInput = hashPassword(password);
                 if (hashedInput === profile.passwordHash) {
                     return {
@@ -224,7 +212,7 @@ async function findOwner(username, password) {
 // ======================== دوال التحقق من الموظفين ========================
 
 /**
- * البحث عن موظف في قاعدة البيانات مع قراءة دوره من جدول roles
+ * البحث عن موظف في قاعدة البيانات
  * @param {string} username - اسم المستخدم
  * @param {string} password - كلمة المرور
  * @returns {Promise<Object|null>} بيانات الموظف أو null
@@ -235,13 +223,10 @@ async function findEmployee(username, password) {
         
         if (!employees) return null;
         
-        // البحث في كل موظف
         for (const [empId, empData] of Object.entries(employees)) {
-            // يمكن أن يكون اسم المستخدم هو username أو email
             if (empData.username === username || empData.email === username) {
                 if (empData.password === password) {
                     
-                    // قراءة اسم الدور من جدول roles إذا كان موجوداً
                     let roleName = 'موظف';
                     if (empData.roleId) {
                         const roleData = await fetchFromFirebase(`roles/${empData.roleId}`);
@@ -271,18 +256,70 @@ async function findEmployee(username, password) {
     }
 }
 
-// ======================== دوال التحقق من الاشتراك (الترخيص) ========================
+// ======================== دوال التحقق من الاشتراك (الترخيص) - معدلة ========================
 
 /**
- * التحقق من صحة كود الترخيص
+ * التحقق من صحة كود الترخيص - إصدار يدعم الهيكل الجديد
  * @param {string} code - كود الترخيص
- * @returns {Promise<Object|null>} بيانات الترخيص أو null
+ * @returns {Promise<Object|null>} بيانات الترخيص الكاملة مع الـ limits و pages
  */
 async function verifyLicenseCode(code) {
     if (!code) return null;
     
     try {
-        // أولاً: التحقق من وجود الكود في إعدادات التصميم
+        // أولاً: محاولة جلب البيانات من Google Sheet API
+        const response = await fetch(`${APIS.VERIFY}?code=${encodeURIComponent(code)}`);
+        const data = await response.json();
+
+        if (data && data.success === true && data.data) {
+            // معالجة البيانات حسب الهيكل الجديد
+            const licenseData = data.data;
+            
+            // حساب الأيام المتبقية بشكل صحيح
+            let daysRemaining = licenseData["عدد الايام اللي ناقصه"] || 0;
+            let status = licenseData["Status"] || "Inactive";
+            
+            // تحويل تاريخ البدء من ISO string إلى تاريخ عادي
+            let startDate = licenseData["تاريخ البدايه"] || "";
+            if (startDate) {
+                const date = new Date(startDate);
+                startDate = date.toLocaleDateString('ar-EG');
+            }
+            
+            // حساب تاريخ الانتهاء
+            let endDate = "";
+            if (startDate && licenseData["مده التفعيل"]) {
+                const start = new Date(licenseData["تاريخ البدايه"]);
+                const end = new Date(start);
+                end.setDate(end.getDate() + (licenseData["مده التفعيل"] || 0));
+                endDate = end.toLocaleDateString('ar-EG');
+            }
+            
+            return {
+                success: true,
+                subscriptionCode: licenseData["الكود"] || code,
+                user: licenseData["User"] || "غير معروف",
+                status: status,
+                statusClass: status === "Active" ? "status-active" : "status-expired",
+                daysRemaining: daysRemaining,
+                type: licenseData["نوع الاشتراك"] || "Basic",
+                startDate: startDate,
+                endDate: endDate,
+                duration: licenseData["مده التفعيل"] || 0,
+                // إضافة الـ limits
+                limits: data.limits || {
+                    employees: 0,
+                    invoices: 0,
+                    warehouses: 0
+                },
+                // إضافة الصفحات المسموحة
+                pages: data.pages || {},
+                // حفظ البيانات الخام أيضاً إذا احتجناها
+                rawData: data
+            };
+        }
+        
+        // إذا لم نجد في API، نبحث في Firebase
         const subData = await fetchFromFirebase('design-system/subscription');
         
         if (subData && subData.code === code) {
@@ -294,31 +331,19 @@ async function verifyLicenseCode(code) {
                 daysRemaining: subData.remainingDays || 365,
                 type: subData.type || 'عادي',
                 startDate: subData.startDate,
-                endDate: subData.endDate
+                endDate: subData.endDate,
+                limits: {
+                    employees: subData.maxEmployees || 10,
+                    invoices: subData.maxInvoices || 1000,
+                    warehouses: subData.maxWarehouses || 5
+                },
+                pages: subData.pages || {}
             };
         }
-                // إذا لم نجد في Firebase، نستخدم API خارجي
-        const response = await fetch(`${APIS.VERIFY}?code=${encodeURIComponent(code)}`);
-        const data = await response.json();
 
-        if (data && data.success && data.data) {
-
-            return {
-                success: true,
-                subscriptionCode: data.data["الكود "] || code,
-                user: data.data["User"] || "غير معروف",
-                status: data.data["Status"] || "Inactive",
-                daysRemaining: data.data["عدد الايام اللي ناقصه"] || 0,
-                type: data.data["نوع الاشتراك"] || "",
-                startDate: data.data["تاريخ البدايه"] || "",
-                duration: data.data["مده التفعيل "] || 0
-            };
-
-        }
-
-                return null;
+        return null;
     } catch (error) {
-        console.error('خطأ في البحث عن الموظف:', error);
+        console.error('خطأ في التحقق من الترخيص:', error);
         return null;
     }
 }
@@ -335,7 +360,6 @@ async function recordOwnerLogin(ownerId, status = 'success') {
         const now = new Date();
         const timestamp = now.toLocaleString('ar-EG', { timeZone: 'Africa/Cairo' });
         
-        // معلومات الجهاز (محاكاة للباك اند)
         const loginEntry = {
             timestamp: timestamp,
             status: status,
@@ -344,10 +368,8 @@ async function recordOwnerLogin(ownerId, status = 'success') {
             location: 'مصر'
         };
         
-        // إضافة إلى سجل الدخول
         await pushToFirebase(`owners/${ownerId}/loginHistory`, loginEntry);
         
-        // تسجيل النشاط
         const activityEntry = {
             timestamp: timestamp,
             action: status === 'success' ? 'تسجيل دخول ناجح' : 'محاولة دخول فاشلة',
@@ -361,12 +383,12 @@ async function recordOwnerLogin(ownerId, status = 'success') {
     }
 }
 
-// ======================== دالة تسجيل الدخول الرئيسية ========================
+// ======================== دالة تسجيل الدخول الرئيسية (معدلة) ========================
 
 /**
  * معالج تسجيل الدخول الرئيسي
  * @param {Object} credentials - بيانات تسجيل الدخول { username, password, licenseCode }
- * @returns {Promise<Object>} نتيجة تسجيل الدخول
+ * @returns {Promise<Object>} نتيجة تسجيل الدخول مع الـ limits و الصفحات
  */
 async function signIn(credentials) {
     const { username, password, licenseCode } = credentials;
@@ -380,20 +402,19 @@ async function signIn(credentials) {
     }
     
     try {
-        // تهيئة Firebase
         await initFirebaseAdmin();
+        
+        // التحقق من الترخيص أولاً إذا تم إدخال كود
+        let licenseData = null;
+        if (licenseCode) {
+            licenseData = await verifyLicenseCode(licenseCode);
+        }
         
         // 1. البحث عن المالك أولاً
         const owner = await findOwner(username, password);
         
         if (owner) {
-            // تسجيل الدخول الناجح في سجل المالك
             await recordOwnerLogin(owner.id, 'success');
-            
-            // تخزين رمز الترخيص إذا كان موجوداً
-            if (licenseCode) {
-                // يمكن تخزينه في الجلسة
-            }
             
             return {
                 success: true,
@@ -405,12 +426,14 @@ async function signIn(credentials) {
                     roleName: owner.roleName,
                     code: owner.code
                 },
+                // إضافة بيانات الترخيص إذا وجدت
+                license: licenseData,
                 message: `مرحباً بك ${owner.name} (Owner)`,
                 redirectTo: 'dashboard.html'
             };
         }
         
-        // 2. إذا لم يكن مالكاً، نبحث بين الموظفين
+        // 2. البحث بين الموظفين
         const employee = await findEmployee(username, password);
         
         if (employee) {
@@ -425,6 +448,8 @@ async function signIn(credentials) {
                     roleName: employee.roleName,
                     code: employee.code
                 },
+                // إضافة بيانات الترخيص إذا وجدت
+                license: licenseData,
                 message: `مرحباً بك ${employee.name} (${employee.roleName})`,
                 redirectTo: 'dashboard.html'
             };
@@ -447,12 +472,12 @@ async function signIn(credentials) {
     }
 }
 
-// ======================== دالة التحقق من الترخيص ========================
+// ======================== دالة التحقق من الترخيص (معدلة) ========================
 
 /**
- * التحقق من صحة كود الترخيص وإرجاع التفاصيل
+ * التحقق من صحة كود الترخيص وإرجاع التفاصيل الكاملة
  * @param {Object} params - معاملات التحقق { licenseCode }
- * @returns {Promise<Object>} نتيجة التحقق
+ * @returns {Promise<Object>} نتيجة التحقق مع الـ limits و الصفحات
  */
 async function verifyLicense(params) {
     const { licenseCode } = params;
@@ -474,14 +499,19 @@ async function verifyLicense(params) {
             return {
                 success: true,
                 licenseData: {
-                    subscriptionCode: licenseData.subscriptionCode || licenseCode,
+                    subscriptionCode: licenseData.subscriptionCode,
                     status: licenseData.status === 'Active' ? 'نشط' : 'منتهي',
-                    statusClass: licenseData.status === 'Active' ? 'status-active' : 'status-expired',
-                    userName: licenseData.user || 'غير معروف',
-                    daysRemaining: licenseData.daysRemaining || 0,
+                    statusClass: licenseData.statusClass,
+                    userName: licenseData.user,
+                    daysRemaining: licenseData.daysRemaining,
                     type: licenseData.type,
                     startDate: licenseData.startDate,
-                    endDate: licenseData.endDate
+                    endDate: licenseData.endDate,
+                    duration: licenseData.duration,
+                    // إضافة الـ limits
+                    limits: licenseData.limits,
+                    // إضافة الصفحات المسموحة
+                    pages: licenseData.pages
                 },
                 message: 'تم التحقق من الترخيص بنجاح'
             };
@@ -502,15 +532,187 @@ async function verifyLicense(params) {
     }
 }
 
-// ======================== دالة استعادة بيانات المستخدم ========================
+// ======================== دوال جديدة للتعامل مع الصلاحيات بناءً على الصفحات ========================
+
+/**
+ * التحقق من صلاحية الوصول إلى صفحة معينة
+ * @param {Object} params - معاملات التحقق { licenseCode, pageName, userRole }
+ * @returns {Promise<Object>} نتيجة التحقق
+ */
+async function checkPageAccess(params) {
+    const { licenseCode, pageName, userRole } = params;
+    
+    if (!pageName) {
+        return {
+            success: false,
+            hasAccess: false,
+            message: 'اسم الصفحة مطلوب'
+        };
+    }
+    
+    // المالك لديه صلاحية الوصول لكل الصفحات
+    if (userRole === 'owner') {
+        return {
+            success: true,
+            hasAccess: true,
+            message: 'المالك لديه صلاحية الوصول'
+        };
+    }
+    
+    if (!licenseCode) {
+        return {
+            success: false,
+            hasAccess: false,
+            message: 'لا يوجد كود ترخيص للتحقق من الصلاحيات'
+        };
+    }
+    
+    try {
+        const licenseData = await verifyLicenseCode(licenseCode);
+        
+        if (!licenseData || !licenseData.success) {
+            return {
+                success: false,
+                hasAccess: false,
+                message: 'الترخيص غير صالح'
+            };
+        }
+        
+        // التحقق من وجود الصفحة في قائمة الصفحات المسموحة
+        const pages = licenseData.pages || {};
+        const hasAccess = pages[pageName] === true;
+        
+        return {
+            success: true,
+            hasAccess: hasAccess,
+            message: hasAccess ? 'مسموح بالوصول' : 'غير مسموح بالوصول إلى هذه الصفحة',
+            pages: pages
+        };
+        
+    } catch (error) {
+        console.error('خطأ في التحقق من صلاحية الصفحة:', error);
+        return {
+            success: false,
+            hasAccess: false,
+            message: 'خطأ في التحقق من الصلاحيات'
+        };
+    }
+}
+
+/**
+ * الحصول على قائمة الصفحات المسموحة للمستخدم
+ * @param {Object} params - معاملات { licenseCode, userRole }
+ * @returns {Promise<Object>} قائمة الصفحات المسموحة
+ */
+async function getAllowedPages(params) {
+    const { licenseCode, userRole } = params;
+    
+    // المالك لديه كل الصفحات مسموحة
+    if (userRole === 'owner') {
+        return {
+            success: true,
+            allowedPages: 'all',
+            message: 'المالك لديه صلاحية الوصول لجميع الصفحات'
+        };
+    }
+    
+    if (!licenseCode) {
+        return {
+            success: false,
+            allowedPages: [],
+            message: 'لا يوجد كود ترخيص'
+        };
+    }
+    
+    try {
+        const licenseData = await verifyLicenseCode(licenseCode);
+        
+        if (!licenseData || !licenseData.success) {
+            return {
+                success: false,
+                allowedPages: [],
+                message: 'الترخيص غير صالح'
+            };
+        }
+        
+        const pages = licenseData.pages || {};
+        
+        // استخراج أسماء الصفحات المسموحة
+        const allowedPages = Object.keys(pages).filter(pageName => pages[pageName] === true);
+        
+        return {
+            success: true,
+            allowedPages: allowedPages,
+            allPages: pages,
+            message: `تم العثور على ${allowedPages.length} صفحة مسموحة`
+        };
+        
+    } catch (error) {
+        console.error('خطأ في جلب الصفحات المسموحة:', error);
+        return {
+            success: false,
+            allowedPages: [],
+            message: 'خطأ في جلب البيانات'
+        };
+    }
+}
+
+/**
+ * الحصول على الـ limits الخاصة بالترخيص
+ * @param {Object} params - معاملات { licenseCode }
+ * @returns {Promise<Object>} الـ limits
+ */
+async function getLicenseLimits(params) {
+    const { licenseCode } = params;
+    
+    if (!licenseCode) {
+        return {
+            success: false,
+            limits: null,
+            message: 'لا يوجد كود ترخيص'
+        };
+    }
+    
+    try {
+        const licenseData = await verifyLicenseCode(licenseCode);
+        
+        if (!licenseData || !licenseData.success) {
+            return {
+                success: false,
+                limits: null,
+                message: 'الترخيص غير صالح'
+            };
+        }
+        
+        return {
+            success: true,
+            limits: licenseData.limits || {
+                employees: 0,
+                invoices: 0,
+                warehouses: 0
+            },
+            message: 'تم جلب الـ limits بنجاح'
+        };
+        
+    } catch (error) {
+        console.error('خطأ في جلب الـ limits:', error);
+        return {
+            success: false,
+            limits: null,
+            message: 'خطأ في جلب البيانات'
+        };
+    }
+}
+
+// ======================== دوال مساعدة إضافية ========================
 
 /**
  * استعادة بيانات المستخدم من التوكن أو الجلسة
- * @param {Object} params - معاملات الاستعادة { userId, userRole, userData }
- * @returns {Promise<Object>} بيانات المستخدم مع اسم الدور المحدث
+ * @param {Object} params - معاملات الاستعادة { userId, userRole, userData, licenseCode }
+ * @returns {Promise<Object>} بيانات المستخدم مع الصلاحيات
  */
 async function getUserWithRole(params) {
-    const { userId, userRole, userData } = params;
+    const { userId, userRole, userData, licenseCode } = params;
     
     if (!userId) {
         return {
@@ -531,6 +733,20 @@ async function getUserWithRole(params) {
             roleName = await getRoleName(userRole);
         }
         
+        // جلب بيانات الترخيص إذا وجدت
+        let licenseInfo = null;
+        if (licenseCode) {
+            const licenseData = await verifyLicenseCode(licenseCode);
+            if (licenseData && licenseData.success) {
+                licenseInfo = {
+                    limits: licenseData.limits,
+                    pages: licenseData.pages,
+                    status: licenseData.status,
+                    daysRemaining: licenseData.daysRemaining
+                };
+            }
+        }
+        
         return {
             success: true,
             user: {
@@ -539,7 +755,8 @@ async function getUserWithRole(params) {
                 roleName: roleName,
                 name: userData?.name || '',
                 code: userData?.code || ''
-            }
+            },
+            license: licenseInfo
         };
         
     } catch (error) {
@@ -552,15 +769,13 @@ async function getUserWithRole(params) {
     }
 }
 
-// ======================== دوال التحقق من الصلاحيات ========================
-
 /**
- * التحقق من صلاحيات المستخدم
- * @param {Object} params - معاملات التحقق { userRole, requiredPermission }
+ * التحقق من صلاحيات المستخدم (عام)
+ * @param {Object} params - معاملات التحقق { userRole, requiredPermission, licenseCode }
  * @returns {Object} نتيجة التحقق
  */
-function hasPermission(params) {
-    const { userRole, requiredPermission } = params;
+async function hasPermission(params) {
+    const { userRole, requiredPermission, licenseCode } = params;
     
     if (!userRole) {
         return { success: false, hasPermission: false };
@@ -571,8 +786,11 @@ function hasPermission(params) {
         return { success: true, hasPermission: true };
     }
     
-    // يمكن إضافة منطق التحقق من الصلاحيات للموظفين هنا
-    // حسب هيكل الصلاحيات في roles
+    // يمكن إضافة منطق التحقق من الصلاحيات حسب الـ permissions من الترخيص
+    if (licenseCode) {
+        const licenseData = await verifyLicenseCode(licenseCode);
+        // يمكن التحقق من صلاحيات محددة هنا
+    }
     
     return { success: true, hasPermission: false };
 }
@@ -593,7 +811,7 @@ function getCurrentRoleName(params) {
     return { roleName };
 }
 
-// ======================== معالج Vercel الرئيسي ========================
+// ======================== معالج Vercel الرئيسي (معدل) ========================
 
 module.exports = async (req, res) => {
     // إعدادات CORS
@@ -633,7 +851,7 @@ module.exports = async (req, res) => {
             return res.status(200).json(result);
         }
         
-        // مسار التحقق من الترخيص
+        // مسار التحقق من الترخيص (معدل)
         if (path === '/api/auth/verify-license' && (method === 'POST' || method === 'GET')) {
             let params = {};
             if (method === 'POST') {
@@ -645,7 +863,28 @@ module.exports = async (req, res) => {
             return res.status(200).json(result);
         }
         
-        // مسار استعادة بيانات المستخدم مع الدور
+        // مسار التحقق من صلاحية صفحة (جديد)
+        if (path === '/api/auth/check-page-access' && method === 'POST') {
+            const body = req.body || {};
+            const result = await checkPageAccess(body);
+            return res.status(200).json(result);
+        }
+        
+        // مسار جلب الصفحات المسموحة (جديد)
+        if (path === '/api/auth/get-allowed-pages' && method === 'POST') {
+            const body = req.body || {};
+            const result = await getAllowedPages(body);
+            return res.status(200).json(result);
+        }
+        
+        // مسار جلب الـ limits (جديد)
+        if (path === '/api/auth/get-license-limits' && method === 'POST') {
+            const body = req.body || {};
+            const result = await getLicenseLimits(body);
+            return res.status(200).json(result);
+        }
+        
+        // مسار استعادة بيانات المستخدم مع الدور (معدل)
         if (path === '/api/auth/get-user-role' && method === 'POST') {
             const body = req.body || {};
             const result = await getUserWithRole(body);
@@ -655,7 +894,7 @@ module.exports = async (req, res) => {
         // مسار التحقق من الصلاحية
         if (path === '/api/auth/has-permission' && method === 'POST') {
             const body = req.body || {};
-            const result = hasPermission(body);
+            const result = await hasPermission(body);
             return res.status(200).json(result);
         }
         
@@ -666,7 +905,7 @@ module.exports = async (req, res) => {
             return res.status(200).json(result);
         }
         
-        // مسار تسجيل الخروج (خدمة جانبية)
+        // مسار تسجيل الخروج
         if (path === '/api/auth/signout' && method === 'POST') {
             return res.status(200).json({
                 success: true,
@@ -678,8 +917,9 @@ module.exports = async (req, res) => {
         if (path === '/api/auth/health' && method === 'GET') {
             return res.status(200).json({
                 status: 'ok',
-                version: '3.1',
-                timestamp: new Date().toISOString()
+                version: '3.2',
+                timestamp: new Date().toISOString(),
+                features: ['license-limits', 'page-access', 'enhaced-verification']
             });
         }
         
@@ -701,16 +941,20 @@ module.exports = async (req, res) => {
     }
 };
 
-// تصدير الدوال للاستخدام في مكان آخر إذا لزم الأمر
+// تصدير الدوال للاستخدام في مكان آخر
 module.exports.signIn = signIn;
 module.exports.verifyLicense = verifyLicense;
+module.exports.verifyLicenseCode = verifyLicenseCode;
 module.exports.getUserWithRole = getUserWithRole;
 module.exports.hasPermission = hasPermission;
 module.exports.getCurrentRoleName = getCurrentRoleName;
 module.exports.getRoleName = getRoleName;
 module.exports.findOwner = findOwner;
 module.exports.findEmployee = findEmployee;
-module.exports.verifyLicenseCode = verifyLicenseCode;
 module.exports.recordOwnerLogin = recordOwnerLogin;
 module.exports.hashPassword = hashPassword;
 module.exports.decodeHash = decodeHash;
+// تصدير الدوال الجديدة
+module.exports.checkPageAccess = checkPageAccess;
+module.exports.getAllowedPages = getAllowedPages;
+module.exports.getLicenseLimits = getLicenseLimits;
