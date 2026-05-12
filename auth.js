@@ -316,10 +316,9 @@ async function verifyLicenseCode(code) {
 
         }
 
-        return null;
-
+                return null;
     } catch (error) {
-        console.error('خطأ في التحقق من الترخيص:', error);
+        console.error('خطأ في البحث عن الموظف:', error);
         return null;
     }
 }
