@@ -264,8 +264,9 @@ async function findEmployee(username, password) {
         }
         
         return null;
+
     } catch (error) {
-        console.error('خطأ في البحث عن الموظف:', error);
+        console.error('خطأ في التحقق من الترخيص:', error);
         return null;
     }
 }
