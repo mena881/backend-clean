@@ -2,6 +2,8 @@ const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
 
+const authRoutes = require('./auth');
+
 const app = express();
 
 
@@ -20,12 +22,23 @@ app.use(express.json());
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);
 
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: 'https://test-3b890-default-rtdb.firebaseio.com/'
-});
+if (!admin.apps.length) {
+
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL: 'https://test-3b890-default-rtdb.firebaseio.com/'
+    });
+
+}
 
 const db = admin.database();
+
+
+// ==========================
+// AUTH API
+// ==========================
+
+app.use('/api/auth', authRoutes);
 
 
 // ==========================
@@ -140,6 +153,20 @@ async function hasPermission(user, permission) {
 app.get('/', (req, res) => {
 
     res.send('Backend Connected To Firebase');
+
+});
+
+
+// ==========================
+// HEALTH
+// ==========================
+
+app.get('/health', (req, res) => {
+
+    res.json({
+        success: true,
+        status: "Server Running"
+    });
 
 });
 
@@ -338,3 +365,5 @@ app.listen(PORT, () => {
     console.log(`Server Running On Port ${PORT}`);
 
 });
+
+module.exports = app;
