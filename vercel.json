@@ -6,6 +6,11 @@
       "use": "@vercel/node"
     }
   ],
+    {
+      "src": "auth.js",
+      "use": "@vercel/node"
+    }
+  ],  
   "routes": [
     {
       "src": "/(.*)",
