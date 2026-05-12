@@ -37,9 +37,11 @@ const db = admin.database();
 // ==========================
 // AUTH API
 // ==========================
+app.all('/api/auth/*', async (req, res) => {
 
-app.use('/api/auth', authRoutes);
+    return await authRoutes(req, res);
 
+});
 
 // ==========================
 // ROUTE PERMISSIONS
