@@ -317,7 +317,9 @@ async function verifyLicenseCode(code) {
 
         }
 
-        return null;
+                return null;
+    }
+}
 
 /**
  * تسجيل محاولة الدخول في سجل المالك
