@@ -297,9 +297,7 @@ async function verifyLicenseCode(code) {
                 endDate: subData.endDate
             };
         }
-        
-        // إذا لم نجد في Firebase، نستخدم API خارجي
-        // إذا لم نجد في Firebase، نستخدم API خارجي
+                // إذا لم نجد في Firebase، نستخدم API خارجي
         const response = await fetch(`${APIS.VERIFY}?code=${encodeURIComponent(code)}`);
         const data = await response.json();
 
@@ -318,13 +316,11 @@ async function verifyLicenseCode(code) {
 
         }
 
-                        return null;
+        return null;
 
     } catch (error) {
         console.error('خطأ في التحقق من الترخيص:', error);
         return null;
-    }
-}
     }
 }
 
