@@ -318,8 +318,6 @@ async function verifyLicenseCode(code) {
         }
 
         return null;
-    }
-}
 
 /**
  * تسجيل محاولة الدخول في سجل المالك
