@@ -317,7 +317,13 @@ async function verifyLicenseCode(code) {
 
         }
 
-                return null;
+                        return null;
+
+    } catch (error) {
+        console.error('خطأ في التحقق من الترخيص:', error);
+        return null;
+    }
+}
     }
 }
 
