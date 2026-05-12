@@ -298,16 +298,25 @@ async function verifyLicenseCode(code) {
         }
         
         // إذا لم نجد في Firebase، نستخدم API خارجي
+        // إذا لم نجد في Firebase، نستخدم API خارجي
         const response = await fetch(`${APIS.VERIFY}?code=${encodeURIComponent(code)}`);
         const data = await response.json();
-        
-        if (data && data.success) {
-            return data;
+
+        if (data && data.success && data.data) {
+
+            return {
+                success: true,
+                subscriptionCode: data.data["الكود "] || code,
+                user: data.data["User"] || "غير معروف",
+                status: data.data["Status"] || "Inactive",
+                daysRemaining: data.data["عدد الايام اللي ناقصه"] || 0,
+                type: data.data["نوع الاشتراك"] || "",
+                startDate: data.data["تاريخ البدايه"] || "",
+                duration: data.data["مده التفعيل "] || 0
+            };
+
         }
-        
-        return null;
-    } catch (error) {
-        console.error('خطأ في التحقق من الترخيص:', error);
+
         return null;
     }
 }
