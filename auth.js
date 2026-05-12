@@ -464,8 +464,12 @@ async function verifyLicense(params) {
                 success: true,
                 licenseData: {
                     subscriptionCode: licenseData.subscriptionCode || licenseCode,
-                    status: licenseData.status === 'Active' ? 'نشط' : 'منتهي',
-                    statusClass: licenseData.status === 'Active' ? 'status-active' : 'status-expired',
+                    status: String(licenseData.status).trim().toLowerCase() === 'active'
+    ? 'نشط'
+    : 'منتهي',
+                    statusClass: String(licenseData.status).trim().toLowerCase() === 'active'
+    ? 'status-active'
+    : 'status-expired',
                     userName: licenseData.user || 'غير معروف',
                     daysRemaining: licenseData.daysRemaining || 0,
                     type: licenseData.type,
