@@ -173,39 +173,6 @@ app.get('/health', (req, res) => {
 });
 
 // ==========================
-// TEST DB ROUTE
-// ==========================
-
-app.get('/test-db/:path', async (req, res) => {
-
-    try {
-
-        const secret = req.query.secret;
-
-        if (secret !== "123456") {
-
-            return res.status(401).json({
-                error: "Invalid secret"
-            });
-
-        }
-
-        const dbPath = req.params.path;
-
-        const snapshot = await db.ref(dbPath).once('value');
-
-        res.json(snapshot.val());
-
-    } catch (error) {
-
-        res.status(500).json({
-            error: error.message
-        });
-
-    }
-
-});
-// ==========================
 // GET ANY TABLE
 // ==========================
 
