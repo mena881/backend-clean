@@ -63,7 +63,7 @@ const ROUTE_PERMISSIONS = {
 
 
 // ==========================
-// AUTH MIDDLEWARE
+// AUTH MIDDLEWARE (محسّن)
 // ==========================
 
 async function authMiddleware(req, res, next) {
@@ -80,7 +80,8 @@ async function authMiddleware(req, res, next) {
 
         }
 
-        const token = authHeader.split("Bearer ")[1];
+        // ✅ تحسين قراءة token - استخدام replace بدلاً من split
+        const token = authHeader.replace("Bearer ", "").trim();
 
         if (!token) {
 
@@ -171,6 +172,46 @@ app.get('/health', (req, res) => {
     });
 
 });
+
+
+// ==========================
+// CURRENT USER (جديد)
+// ==========================
+
+app.get('/api/me', authMiddleware, async (req, res) => {
+
+    try {
+
+        const uid = req.user.uid;
+
+        const snapshot = await db.ref(`users/${uid}`).once('value');
+
+        const userData = snapshot.val();
+
+        if (!userData) {
+
+            return res.status(404).json({
+                error: "User not found"
+            });
+
+        }
+
+        res.json({
+            uid,
+            email: req.user.email,
+            ...userData
+        });
+
+    } catch (error) {
+
+        res.status(500).json({
+            error: error.message
+        });
+
+    }
+
+});
+
 
 // ==========================
 // GET ANY TABLE
