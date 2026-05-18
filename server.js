@@ -20,6 +20,11 @@ app.use(express.json());
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);
 
+// Database mapping configuration
+const DATABASES = {
+    client_1: "https://test-3b890-default-rtdb.firebaseio.com/"
+};
+
 // Store database instances by URL
 const dbInstances = new Map();
 
@@ -35,8 +40,18 @@ function getDatabaseInstance(databaseURL) {
     return dbInstances.get(databaseURL);
 }
 
+function getClientDatabase(clientId) {
+    const databaseURL = DATABASES[clientId];
+    
+    if (!databaseURL) {
+        throw new Error(`Database not configured for client: ${clientId}`);
+    }
+    
+    return getDatabaseInstance(databaseURL);
+}
+
 // ==========================
-// LICENSE MIDDLEWARE (NEW)
+// LICENSE MIDDLEWARE
 // ==========================
 
 async function verifyLicense(req, res, next) {
@@ -53,7 +68,8 @@ async function verifyLicense(req, res, next) {
         if (global.licenseCache && global.licenseCache[licenseCode] && 
             (Date.now() - global.licenseCache[licenseCode].timestamp) < 300000) {
             req.licenseData = global.licenseCache[licenseCode].data;
-            req.db = getDatabaseInstance(req.licenseData.database.url);
+            const clientId = req.licenseData.database.client_id;
+            req.db = getClientDatabase(clientId);
             return next();
         }
 
@@ -85,7 +101,8 @@ async function verifyLicense(req, res, next) {
         };
 
         req.licenseData = licenseData;
-        req.db = getDatabaseInstance(licenseData.database.url);
+        const clientId = req.licenseData.database.client_id;
+        req.db = getClientDatabase(clientId);
         
         next();
 
@@ -121,7 +138,7 @@ const ROUTE_PERMISSIONS = {
 };
 
 // ==========================
-// AUTH MIDDLEWARE (Modified to use dynamic DB)
+// AUTH MIDDLEWARE
 // ==========================
 
 async function authMiddleware(req, res, next) {
@@ -151,7 +168,7 @@ async function authMiddleware(req, res, next) {
             });
         }
 
-        // Need to verify against Firebase Auth (this is global, not per database)
+        // Verify against Firebase Auth (global)
         const decodedToken = await admin.auth().verifyIdToken(token);
         req.user = decodedToken;
         req.db = dbToUse; // Pass database to routes
@@ -166,7 +183,7 @@ async function authMiddleware(req, res, next) {
 }
 
 // ==========================
-// CHECK PERMISSION (Modified to use dynamic DB)
+// CHECK PERMISSION
 // ==========================
 
 async function hasPermission(req, permission) {
@@ -210,7 +227,7 @@ app.get('/', (req, res) => {
 });
 
 // ==========================
-// HEALTH (Modified to show license info)
+// HEALTH
 // ==========================
 
 app.get('/health', (req, res) => {
@@ -222,7 +239,7 @@ app.get('/health', (req, res) => {
 });
 
 // ==========================
-// CURRENT USER (Modified)
+// CURRENT USER
 // ==========================
 
 app.get('/api/me', verifyLicense, authMiddleware, async (req, res) => {
@@ -258,7 +275,7 @@ app.get('/api/me', verifyLicense, authMiddleware, async (req, res) => {
 });
 
 // ==========================
-// GET ANY TABLE (Modified)
+// GET ANY TABLE
 // ==========================
 
 app.get('/db/:path', verifyLicense, authMiddleware, async (req, res) => {
@@ -288,7 +305,7 @@ app.get('/db/:path', verifyLicense, authMiddleware, async (req, res) => {
 });
 
 // ==========================
-// ADD DATA (Modified)
+// ADD DATA
 // ==========================
 
 app.post('/db/:path', verifyLicense, authMiddleware, async (req, res) => {
@@ -334,7 +351,7 @@ app.post('/db/:path', verifyLicense, authMiddleware, async (req, res) => {
 });
 
 // ==========================
-// UPDATE DATA (Modified)
+// UPDATE DATA
 // ==========================
 
 app.put('/db/:path/:id', verifyLicense, authMiddleware, async (req, res) => {
@@ -365,7 +382,7 @@ app.put('/db/:path/:id', verifyLicense, authMiddleware, async (req, res) => {
 });
 
 // ==========================
-// DELETE DATA (Modified)
+// DELETE DATA
 // ==========================
 
 app.delete('/db/:path/:id', verifyLicense, authMiddleware, async (req, res) => {
@@ -395,7 +412,7 @@ app.delete('/db/:path/:id', verifyLicense, authMiddleware, async (req, res) => {
 });
 
 // ==========================
-// LICENSE INFO ENDPOINT (NEW)
+// LICENSE INFO ENDPOINT
 // ==========================
 
 app.get('/api/license/info', verifyLicense, async (req, res) => {
