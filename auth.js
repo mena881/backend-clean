@@ -1,21 +1,104 @@
 // api/auth.js - Vercel Serverless Function
 // نظام المصادقة وإدارة التراخيص - النسخة الخلفية
-// الإصدار: 3.2
+// الإصدار: 3.3
 // آخر تحديث: 2026-03-10
-// التعديل: دعم هيكل البيانات الجديد من Google Sheet (limits, pages)
+// التعديل: دعم العملاء المتعددين (Multi-tenant) مع client_id
 
 const fetch = require('node-fetch');
 
 // ======================== الإعدادات العامة ========================
-const FIREBASE_CONFIG = {
+
+// قاعدة Firebase الافتراضية (للخلفية)
+const DEFAULT_FIREBASE_CONFIG = {
     databaseURL: "https://test-3b890-default-rtdb.firebaseio.com/"
 };
+
+// ======================== تكوين العملاء (Client Configuration) ========================
+// ربط client_id بقاعدة بيانات Firebase الخاصة به
+// يمكنك إضافة المزيد من العملاء هنا
+const CLIENTS_CONFIG = {
+    "client_1": {
+        databaseURL: "https://test-3b890-default-rtdb.firebaseio.com/",  // استبدل بالرابط الحقيقي
+        projectId: "client1-xxxxx",  // معرف المشروع (اختياري)
+        description: "اول عميل "
+    },
+    "client_2": {
+        databaseURL: "https://client2-xxxxx-default-rtdb.firebaseio.com/",  // استبدل بالرابط الحقيقي
+        projectId: "client2-xxxxx",
+        description: "عميل رقم 2"
+    },
+    // يمكنك إضافة المزيد من العملاء حسب الحاجة
+    // "client_3": {
+    //     databaseURL: "https://client3-xxxxx-default-rtdb.firebaseio.com/",
+    //     projectId: "client3-xxxxx",
+    //     description: "عميل رقم 3"
+    // }
+};
+
+// متغير لحفظ إعدادات قاعدة البيانات الحالية (لكل طلب)
+let currentFirebaseConfig = { ...DEFAULT_FIREBASE_CONFIG };
+let currentClientId = null;
 
 // روابط APIs
 const APIS = {
     VERIFY: "https://script.google.com/macros/s/AKfycbyztFTOFHunQKahA99RskXGKx6Sh9CUCLwij8gwHqDd0UUblmJ6DCzzGfAMCXf7iS1P/exec",
     LOGIN_RECORD: "https://script.google.com/macros/s/AKfycbzfpHuNaSs-96CSVnrDHtcf9_gRsJvbWZfs0cz3K4U81wkjogA1zbAUy11C71aOMY1eSA/exec"
 };
+
+// ======================== دوال مساعدة لإدارة العملاء ========================
+
+/**
+ * الحصول على إعدادات Firebase الخاصة بالعميل
+ * @param {string} clientId - معرف العميل
+ * @returns {Object} إعدادات Firebase للعميل
+ */
+function getClientFirebaseConfig(clientId) {
+    if (!clientId) {
+        console.log('⚠️ لا يوجد client_id، استخدام الإعدادات الافتراضية');
+        return { ...DEFAULT_FIREBASE_CONFIG };
+    }
+    
+    if (CLIENTS_CONFIG[clientId]) {
+        console.log(`✅ تم العثور على تكوين للعميل: ${clientId}`);
+        return {
+            databaseURL: CLIENTS_CONFIG[clientId].databaseURL,
+            projectId: CLIENTS_CONFIG[clientId].projectId
+        };
+    }
+    
+    console.log(`⚠️ لم يتم العثور على تكوين للعميل: ${clientId}، استخدام الإعدادات الافتراضية`);
+    return { ...DEFAULT_FIREBASE_CONFIG };
+}
+
+/**
+ * تحديث إعدادات قاعدة البيانات الحالية بناءً على client_id
+ * @param {string} clientId - معرف العميل
+ */
+function updateFirebaseConfig(clientId) {
+    if (clientId && clientId !== currentClientId) {
+        currentClientId = clientId;
+        currentFirebaseConfig = getClientFirebaseConfig(clientId);
+        console.log(`🔄 تم تحديث إعدادات Firebase للعميل: ${clientId}`);
+        console.log(`📡 قاعدة البيانات: ${currentFirebaseConfig.databaseURL}`);
+    }
+}
+
+/**
+ * إعادة ضبط إعدادات Firebase إلى الافتراضية
+ */
+function resetFirebaseConfig() {
+    currentClientId = null;
+    currentFirebaseConfig = { ...DEFAULT_FIREBASE_CONFIG };
+    console.log('🔄 تم إعادة ضبط إعدادات Firebase إلى الإعدادات الافتراضية');
+}
+
+/**
+ * الحصول على رابط Firebase الحالي
+ * @returns {string} رابط قاعدة البيانات الحالي
+ */
+function getCurrentDatabaseURL() {
+    return currentFirebaseConfig.databaseURL;
+}
 
 // ======================== دوال مساعدة للتشفير ========================
 
@@ -48,37 +131,43 @@ function decodeHash(str) {
     }
 }
 
-// ======================== Firebase Admin ========================
+// ======================== Firebase Admin (معدل لدعم العملاء المتعددين) ========================
 let admin = null;
 let database = null;
 
 /**
- * تهيئة Firebase Admin SDK
+ * تهيئة Firebase Admin SDK (باستخدام الإعدادات الحالية)
  */
 async function initFirebaseAdmin() {
     if (admin && database) return { admin, database };
     
     try {
+        // استخدام إعدادات العميل الحالية إذا كانت موجودة
+        const databaseURL = currentFirebaseConfig.databaseURL;
+        
         if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
             admin = require('firebase-admin');
             
             if (!admin.apps.length) {
+                // إذا كان هناك client_id محدد، نستخدم Project ID الخاص بالعميل
+                const projectId = currentFirebaseConfig.projectId || process.env.FIREBASE_PROJECT_ID;
+                
                 admin.initializeApp({
                     credential: admin.credential.cert({
-                        projectId: process.env.FIREBASE_PROJECT_ID,
+                        projectId: projectId,
                         privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
                         clientEmail: process.env.FIREBASE_CLIENT_EMAIL
                     }),
-                    databaseURL: process.env.FIREBASE_DATABASE_URL || FIREBASE_CONFIG.databaseURL
+                    databaseURL: databaseURL
                 });
             }
             
             database = admin.database();
-            console.log('✅ Firebase Admin initialized');
+            console.log(`✅ Firebase Admin initialized with database: ${databaseURL}`);
             return { admin, database };
         }
         
-        console.log('⚠️ Using Firebase REST API (no admin credentials)');
+        console.log(`⚠️ Using Firebase REST API with database: ${databaseURL}`);
         return { admin: null, database: null };
         
     } catch (error) {
@@ -88,11 +177,13 @@ async function initFirebaseAdmin() {
 }
 
 /**
- * جلب بيانات من Firebase باستخدام REST API
+ * جلب بيانات من Firebase باستخدام REST API (معدل لدعم client_id)
  */
 async function fetchFromFirebase(path) {
     try {
-        const url = `${FIREBASE_CONFIG.databaseURL}${path}.json`;
+        const databaseURL = getCurrentDatabaseURL();
+        const url = `${databaseURL}${path}.json`;
+        console.log(`📡 Fetching: ${url}`);
         const response = await fetch(url);
         const data = await response.json();
         return data;
@@ -103,11 +194,13 @@ async function fetchFromFirebase(path) {
 }
 
 /**
- * كتابة بيانات إلى Firebase باستخدام REST API
+ * كتابة بيانات إلى Firebase باستخدام REST API (معدل لدعم client_id)
  */
 async function writeToFirebase(path, data) {
     try {
-        const url = `${FIREBASE_CONFIG.databaseURL}${path}.json`;
+        const databaseURL = getCurrentDatabaseURL();
+        const url = `${databaseURL}${path}.json`;
+        console.log(`📡 Writing to: ${url}`);
         const response = await fetch(url, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -122,11 +215,13 @@ async function writeToFirebase(path, data) {
 }
 
 /**
- * إضافة بيانات إلى Firebase (push) باستخدام REST API
+ * إضافة بيانات إلى Firebase (push) باستخدام REST API (معدل لدعم client_id)
  */
 async function pushToFirebase(path, data) {
     try {
-        const url = `${FIREBASE_CONFIG.databaseURL}${path}.json`;
+        const databaseURL = getCurrentDatabaseURL();
+        const url = `${databaseURL}${path}.json`;
+        console.log(`📡 Pushing to: ${url}`);
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -256,12 +351,12 @@ async function findEmployee(username, password) {
     }
 }
 
-// ======================== دوال التحقق من الاشتراك (الترخيص) - معدلة ========================
+// ======================== دوال التحقق من الاشتراك (الترخيص) - معدلة لدعم client_id ========================
 
 /**
- * التحقق من صحة كود الترخيص - إصدار يدعم الهيكل الجديد
+ * التحقق من صحة كود الترخيص - إصدار يدعم الهيكل الجديد و client_id
  * @param {string} code - كود الترخيص
- * @returns {Promise<Object|null>} بيانات الترخيص الكاملة مع الـ limits و pages
+ * @returns {Promise<Object|null>} بيانات الترخيص الكاملة مع الـ limits و pages و client_id
  */
 async function verifyLicenseCode(code) {
     if (!code) return null;
@@ -274,6 +369,15 @@ async function verifyLicenseCode(code) {
         if (data && data.success === true && data.data) {
             // معالجة البيانات حسب الهيكل الجديد
             const licenseData = data.data;
+            
+            // استخراج client_id من الرد
+            const clientId = data.database?.client_id || null;
+            
+            // تحديث إعدادات Firebase بناءً على client_id (مهم!)
+            if (clientId) {
+                updateFirebaseConfig(clientId);
+                console.log(`✅ تم تعيين قاعدة البيانات للعميل: ${clientId}`);
+            }
             
             // حساب الأيام المتبقية بشكل صحيح
             let daysRemaining = licenseData["عدد الايام اللي ناقصه"] || 0;
@@ -306,6 +410,8 @@ async function verifyLicenseCode(code) {
                 startDate: startDate,
                 endDate: endDate,
                 duration: licenseData["مده التفعيل"] || 0,
+                // إضافة client_id
+                clientId: clientId,
                 // إضافة الـ limits
                 limits: data.limits || {
                     employees: 0,
@@ -314,12 +420,14 @@ async function verifyLicenseCode(code) {
                 },
                 // إضافة الصفحات المسموحة
                 pages: data.pages || {},
+                // حفظ بيانات قاعدة البيانات
+                database: data.database || {},
                 // حفظ البيانات الخام أيضاً إذا احتجناها
                 rawData: data
             };
         }
         
-        // إذا لم نجد في API، نبحث في Firebase
+        // إذا لم نجد في API، نبحث في Firebase (مع الإعدادات الحالية)
         const subData = await fetchFromFirebase('design-system/subscription');
         
         if (subData && subData.code === code) {
@@ -332,6 +440,7 @@ async function verifyLicenseCode(code) {
                 type: subData.type || 'عادي',
                 startDate: subData.startDate,
                 endDate: subData.endDate,
+                clientId: currentClientId,
                 limits: {
                     employees: subData.maxEmployees || 10,
                     invoices: subData.maxInvoices || 1000,
@@ -365,7 +474,8 @@ async function recordOwnerLogin(ownerId, status = 'success') {
             status: status,
             ip: 'server-side',
             device: 'Vercel Server',
-            location: 'مصر'
+            location: 'مصر',
+            clientId: currentClientId  // إضافة client_id للتسجيل
         };
         
         await pushToFirebase(`owners/${ownerId}/loginHistory`, loginEntry);
@@ -374,7 +484,8 @@ async function recordOwnerLogin(ownerId, status = 'success') {
             timestamp: timestamp,
             action: status === 'success' ? 'تسجيل دخول ناجح' : 'محاولة دخول فاشلة',
             details: status === 'success' ? 'تم تسجيل الدخول بنجاح' : 'فشل تسجيل الدخول',
-            performedBy: 'owner'
+            performedBy: 'owner',
+            clientId: currentClientId
         };
         await pushToFirebase(`owners/${ownerId}/activityLog`, activityEntry);
         
@@ -383,12 +494,12 @@ async function recordOwnerLogin(ownerId, status = 'success') {
     }
 }
 
-// ======================== دالة تسجيل الدخول الرئيسية (معدلة) ========================
+// ======================== دالة تسجيل الدخول الرئيسية (معدلة لدعم client_id) ========================
 
 /**
  * معالج تسجيل الدخول الرئيسي
  * @param {Object} credentials - بيانات تسجيل الدخول { username, password, licenseCode }
- * @returns {Promise<Object>} نتيجة تسجيل الدخول مع الـ limits و الصفحات
+ * @returns {Promise<Object>} نتيجة تسجيل الدخول مع الـ limits و الصفحات و client_id
  */
 async function signIn(credentials) {
     const { username, password, licenseCode } = credentials;
@@ -402,13 +513,14 @@ async function signIn(credentials) {
     }
     
     try {
-        await initFirebaseAdmin();
-        
-        // التحقق من الترخيص أولاً إذا تم إدخال كود
+        // التحقق من الترخيص أولاً إذا تم إدخال كود (هذا سيحدد client_id تلقائياً)
         let licenseData = null;
         if (licenseCode) {
             licenseData = await verifyLicenseCode(licenseCode);
         }
+        
+        // تهيئة Firebase Admin بعد تحديد client_id
+        await initFirebaseAdmin();
         
         // 1. البحث عن المالك أولاً
         const owner = await findOwner(username, password);
@@ -428,6 +540,9 @@ async function signIn(credentials) {
                 },
                 // إضافة بيانات الترخيص إذا وجدت
                 license: licenseData,
+                // إضافة client_id للرد
+                clientId: currentClientId,
+                databaseURL: getCurrentDatabaseURL(),
                 message: `مرحباً بك ${owner.name} (Owner)`,
                 redirectTo: 'dashboard.html'
             };
@@ -450,6 +565,9 @@ async function signIn(credentials) {
                 },
                 // إضافة بيانات الترخيص إذا وجدت
                 license: licenseData,
+                // إضافة client_id للرد
+                clientId: currentClientId,
+                databaseURL: getCurrentDatabaseURL(),
                 message: `مرحباً بك ${employee.name} (${employee.roleName})`,
                 redirectTo: 'dashboard.html'
             };
@@ -472,12 +590,12 @@ async function signIn(credentials) {
     }
 }
 
-// ======================== دالة التحقق من الترخيص (معدلة) ========================
+// ======================== دالة التحقق من الترخيص (معدلة لدعم client_id) ========================
 
 /**
  * التحقق من صحة كود الترخيص وإرجاع التفاصيل الكاملة
  * @param {Object} params - معاملات التحقق { licenseCode }
- * @returns {Promise<Object>} نتيجة التحقق مع الـ limits و الصفحات
+ * @returns {Promise<Object>} نتيجة التحقق مع الـ limits و الصفحات و client_id
  */
 async function verifyLicense(params) {
     const { licenseCode } = params;
@@ -491,8 +609,6 @@ async function verifyLicense(params) {
     }
     
     try {
-        await initFirebaseAdmin();
-        
         const licenseData = await verifyLicenseCode(licenseCode);
         
         if (licenseData && licenseData.success) {
@@ -508,11 +624,14 @@ async function verifyLicense(params) {
                     startDate: licenseData.startDate,
                     endDate: licenseData.endDate,
                     duration: licenseData.duration,
+                    // إضافة client_id
+                    clientId: licenseData.clientId,
                     // إضافة الـ limits
                     limits: licenseData.limits,
                     // إضافة الصفحات المسموحة
                     pages: licenseData.pages
                 },
+                databaseURL: getCurrentDatabaseURL(),
                 message: 'تم التحقق من الترخيص بنجاح'
             };
         } else {
@@ -532,7 +651,19 @@ async function verifyLicense(params) {
     }
 }
 
-// ======================== دوال جديدة للتعامل مع الصلاحيات بناءً على الصفحات ========================
+/**
+ * الحصول على client_id الحالي وقاعدة البيانات
+ * @returns {Object} معلومات العميل الحالي
+ */
+function getCurrentClientInfo() {
+    return {
+        clientId: currentClientId,
+        databaseURL: getCurrentDatabaseURL(),
+        config: currentClientId ? CLIENTS_CONFIG[currentClientId] : null
+    };
+}
+
+// ======================== دوال للتعامل مع الصلاحيات بناءً على الصفحات ========================
 
 /**
  * التحقق من صلاحية الوصول إلى صفحة معينة
@@ -644,6 +775,7 @@ async function getAllowedPages(params) {
             success: true,
             allowedPages: allowedPages,
             allPages: pages,
+            clientId: licenseData.clientId,
             message: `تم العثور على ${allowedPages.length} صفحة مسموحة`
         };
         
@@ -691,6 +823,7 @@ async function getLicenseLimits(params) {
                 invoices: 0,
                 warehouses: 0
             },
+            clientId: licenseData.clientId,
             message: 'تم جلب الـ limits بنجاح'
         };
         
@@ -742,7 +875,8 @@ async function getUserWithRole(params) {
                     limits: licenseData.limits,
                     pages: licenseData.pages,
                     status: licenseData.status,
-                    daysRemaining: licenseData.daysRemaining
+                    daysRemaining: licenseData.daysRemaining,
+                    clientId: licenseData.clientId
                 };
             }
         }
@@ -756,7 +890,9 @@ async function getUserWithRole(params) {
                 name: userData?.name || '',
                 code: userData?.code || ''
             },
-            license: licenseInfo
+            license: licenseInfo,
+            clientId: currentClientId,
+            databaseURL: getCurrentDatabaseURL()
         };
         
     } catch (error) {
@@ -811,7 +947,7 @@ function getCurrentRoleName(params) {
     return { roleName };
 }
 
-// ======================== معالج Vercel الرئيسي (معدل) ========================
+// ======================== معالج Vercel الرئيسي (معدل لدعم client_id) ========================
 
 module.exports = async (req, res) => {
     // إعدادات CORS
@@ -863,28 +999,37 @@ module.exports = async (req, res) => {
             return res.status(200).json(result);
         }
         
-        // مسار التحقق من صلاحية صفحة (جديد)
+        // مسار الحصول على معلومات العميل الحالي (جديد)
+        if (path === '/api/auth/client-info' && method === 'GET') {
+            const result = getCurrentClientInfo();
+            return res.status(200).json({
+                success: true,
+                ...result
+            });
+        }
+        
+        // مسار التحقق من صلاحية صفحة
         if (path === '/api/auth/check-page-access' && method === 'POST') {
             const body = req.body || {};
             const result = await checkPageAccess(body);
             return res.status(200).json(result);
         }
         
-        // مسار جلب الصفحات المسموحة (جديد)
+        // مسار جلب الصفحات المسموحة
         if (path === '/api/auth/get-allowed-pages' && method === 'POST') {
             const body = req.body || {};
             const result = await getAllowedPages(body);
             return res.status(200).json(result);
         }
         
-        // مسار جلب الـ limits (جديد)
+        // مسار جلب الـ limits
         if (path === '/api/auth/get-license-limits' && method === 'POST') {
             const body = req.body || {};
             const result = await getLicenseLimits(body);
             return res.status(200).json(result);
         }
         
-        // مسار استعادة بيانات المستخدم مع الدور (معدل)
+        // مسار استعادة بيانات المستخدم مع الدور
         if (path === '/api/auth/get-user-role' && method === 'POST') {
             const body = req.body || {};
             const result = await getUserWithRole(body);
@@ -907,6 +1052,8 @@ module.exports = async (req, res) => {
         
         // مسار تسجيل الخروج
         if (path === '/api/auth/signout' && method === 'POST') {
+            // إعادة ضبط إعدادات Firebase عند تسجيل الخروج
+            resetFirebaseConfig();
             return res.status(200).json({
                 success: true,
                 message: 'تم تسجيل الخروج بنجاح'
@@ -917,9 +1064,11 @@ module.exports = async (req, res) => {
         if (path === '/api/auth/health' && method === 'GET') {
             return res.status(200).json({
                 status: 'ok',
-                version: '3.2',
+                version: '3.3',
                 timestamp: new Date().toISOString(),
-                features: ['license-limits', 'page-access', 'enhaced-verification']
+                features: ['license-limits', 'page-access', 'multi-tenant', 'client-id-support'],
+                currentClient: currentClientId,
+                databaseURL: getCurrentDatabaseURL()
             });
         }
         
@@ -954,7 +1103,12 @@ module.exports.findEmployee = findEmployee;
 module.exports.recordOwnerLogin = recordOwnerLogin;
 module.exports.hashPassword = hashPassword;
 module.exports.decodeHash = decodeHash;
-// تصدير الدوال الجديدة
 module.exports.checkPageAccess = checkPageAccess;
 module.exports.getAllowedPages = getAllowedPages;
 module.exports.getLicenseLimits = getLicenseLimits;
+// تصدير دوال العملاء المتعددين الجديدة
+module.exports.getClientFirebaseConfig = getClientFirebaseConfig;
+module.exports.updateFirebaseConfig = updateFirebaseConfig;
+module.exports.resetFirebaseConfig = resetFirebaseConfig;
+module.exports.getCurrentClientInfo = getCurrentClientInfo;
+module.exports.getCurrentDatabaseURL = getCurrentDatabaseURL;
